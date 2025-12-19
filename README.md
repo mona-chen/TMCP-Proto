@@ -28,22 +28,23 @@ Copyright (c) 2025 Tween IM. All rights reserved.
 
 ## Table of Contents
 
-1. [Introduction](#1-introduction)  
-2. [Conventions and Terminology](#2-conventions-and-terminology)  
-3. [Protocol Architecture](#3-protocol-architecture)  
-4. [Identity and Authentication](#4-identity-and-authentication)  
-5. [Authorization Framework](#5-authorization-framework)  
-6. [Wallet Integration Layer](#6-wallet-integration-layer)  
-7. [Payment Protocol](#7-payment-protocol)  
-8. [Event System](#8-event-system)  
-9. [Mini-App Lifecycle](#9-mini-app-lifecycle)  
-10. [Communication Verbs](#10-communication-verbs)  
-11. [Security Considerations](#11-security-considerations)  
-12. [Error Handling](#12-error-handling)  
-13. [Federation Considerations](#13-federation-considerations)  
-14. [IANA Considerations](#14-iana-considerations)  
-15. [References](#15-references)  
-16. [Appendices](#16-appendices)
+1. [Introduction](#1-introduction)
+2. [Conventions and Terminology](#2-conventions-and-terminology)
+3. [Protocol Architecture](#3-protocol-architecture)
+4. [Identity and Authentication](#4-identity-and-authentication)
+5. [Authorization Framework](#5-authorization-framework)
+6. [Wallet Integration Layer](#6-wallet-integration-layer)
+7. [Payment Protocol](#7-payment-protocol)
+8. [Event System](#8-event-system)
+9. [Mini-App Lifecycle](#9-mini-app-lifecycle)
+10. [Communication Verbs](#10-communication-verbs)
+11. [Security Considerations](#11-security-considerations)
+12. [Error Handling](#12-error-handling)
+13. [Federation Considerations](#13-federation-considerations)
+14. [IANA Considerations](#14-iana-considerations)
+15. [References](#15-references)
+16. [Official and Preinstalled Mini-Apps](#16-official-and-preinstalled-mini-apps)
+17. [Appendices](#17-appendices)
 
 ---
 
@@ -147,7 +148,31 @@ JWT-based access token issued by the TMCP Server for mini-app authentication, di
 
 ### 3.1 System Components
 
-TMCP operates as an isolated layer that extends Matrix capabilities without modifying its core. The architecture consists of four primary components:
+TMCP operates as an isolated layer that extends Matrix capabilities without modifying its core. The TMCP protocol defines interfaces between four independent systems:
+
+1. **Element X/Classic Fork** (Client Application)
+   - Matrix client implementation
+   - TMCP Bridge component
+   - Mini-app sandbox runtime
+
+2. **Matrix Homeserver** (Synapse)
+   - Standard Matrix protocol implementation
+   - Application Service support
+
+3. **TMCP Server** (Application Service)
+   - Protocol coordinator
+   - OAuth 2.0 authorization server
+   - Mini-app registry
+
+4. **Wallet Service** (Independent)
+   - Balance management and ledger
+   - Transaction processing
+   - External gateway integration
+   - **MUST implement TMCP-defined wallet interfaces**
+
+This RFC defines the **protocol contracts** between these systems, not their internal implementations.
+
+The architecture consists of these four primary components:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -657,7 +682,7 @@ Authorization: Bearer <TEP_TOKEN>
       },
       "status": "completed",
       "note": "Lunch money",
-      "timestamp": "2024-12-18T12:00:00Z",
+      "timestamp": "2025-12-18T12:00:00Z",
       "room_id": "!chat:tween.example"
     }
   ],
@@ -680,10 +705,12 @@ Payments transition through well-defined states:
 
 ```
 INITIATED → AUTHORIZED → PROCESSING → COMPLETED
-              ↓              ↓            
-          EXPIRED        FAILED      
-              ↓              ↓            
+              ↓              ↓
+          EXPIRED        FAILED
+              ↓              ↓
           CANCELLED ←───────┘
+              ↓
+          MFA_REQUIRED → (after MFA verification) → AUTHORIZED
 ```
 
 ### 7.2 Peer-to-Peer Transfer
@@ -724,7 +751,7 @@ Content-Type: application/json
     "user_id": "@bob:tween.example",
     "wallet_id": "tw_user_67890"
   },
-  "timestamp": "2024-12-18T14:30:00Z",
+  "timestamp": "2025-12-18T14:30:00Z",
   "event_id": "$event_abc123:tween.example"
 }
 ```
@@ -750,7 +777,7 @@ The TMCP Server MUST create a Matrix event documenting the transfer:
       "user_id": "@bob:tween.example"
     },
     "status": "completed",
-    "timestamp": "2024-12-18T14:30:00Z"
+    "timestamp": "2025-12-18T14:30:00Z"
   },
   "room_id": "!chat:tween.example",
   "sender": "@alice:tween.example"
@@ -798,8 +825,8 @@ Content-Type: application/json
     "wallet_id": "tw_merchant_001"
   },
   "authorization_required": true,
-  "expires_at": "2024-12-18T14:35:00Z",
-  "created_at": "2024-12-18T14:30:00Z"
+  "expires_at": "2025-12-18T14:35:00Z",
+  "created_at": "2025-12-18T14:30:00Z"
 }
 ```
 
@@ -832,7 +859,7 @@ Content-Type: application/json
 {
   "signature": "base64_encoded_signature",
   "device_id": "device_xyz789",
-  "timestamp": "2024-12-18T14:30:15Z"
+  "timestamp": "2025-12-18T14:30:15Z"
 }
 ```
 
@@ -853,7 +880,7 @@ Content-Type: application/json
     "miniapp_id": "ma_shop_001",
     "wallet_id": "tw_merchant_001"
   },
-  "completed_at": "2024-12-18T14:30:20Z"
+  "completed_at": "2025-12-18T14:30:20Z"
 }
 ```
 
@@ -891,6 +918,221 @@ Content-Type: application/json
   "notes": "User requested refund"
 }
 ```
+
+### 7.4 Multi-Factor Authentication for Payments
+
+#### 7.4.1 Overview
+
+When Wallet Service implementations include multi-factor authentication requirements, the TMCP protocol provides a standardized challenge-response mechanism. The Wallet Service determines MFA policy; TMCP Server coordinates the challenge delivery and response validation.
+
+**Protocol Flow:**
+
+```
+Client → TMCP Server: Payment Authorization
+         ↓
+TMCP Server → Wallet Service: Validate Payment
+         ↓
+Wallet Service → TMCP Server: MFA Required (if configured)
+         ↓
+TMCP Server → Client: MFA Challenge
+         ↓
+Client → User: Present MFA UI
+         ↓
+User → Client: Provide MFA Credentials
+         ↓
+Client → TMCP Server: MFA Response
+         ↓
+TMCP Server → Wallet Service: Validate MFA
+         ↓
+Wallet Service → TMCP Server: Validation Result
+         ↓
+TMCP Server → Client: Proceed or Retry
+```
+
+#### 7.4.2 MFA Challenge Request/Response
+
+When a payment authorization is submitted and the Wallet Service requires additional authentication, the TMCP Server MUST return an MFA challenge:
+
+**Challenge Response Format:**
+
+```json
+{
+  "payment_id": "pay_abc123",
+  "status": "mfa_required",
+  "mfa_challenge": {
+    "challenge_id": "mfa_ch_xyz789",
+    "methods": [
+      {
+        "type": "transaction_pin",
+        "enabled": true,
+        "display_name": "Transaction PIN"
+      },
+      {
+        "type": "biometric",
+        "enabled": true,
+        "display_name": "Biometric Authentication",
+        "biometric_types": ["fingerprint", "face_recognition"]
+      },
+      {
+        "type": "totp",
+        "enabled": true,
+        "display_name": "Authenticator Code"
+      }
+    ],
+    "required_method": "any",
+    "expires_at": "2025-12-18T14:32:15Z",
+    "max_attempts": 3
+  }
+}
+```
+
+**Standard MFA Method Types:**
+
+| Type | Description | Credential Format |
+|------|-------------|-------------------|
+| `transaction_pin` | Numeric PIN | `{"pin": "1234"}` |
+| `biometric` | Device biometric verification | `{"attestation": "...", "biometric_type": "fingerprint"}` |
+| `totp` | Time-based one-time password | `{"code": "123456"}` |
+
+Wallet Service implementations MAY support additional method types through extension.
+
+#### 7.4.3 MFA Response Submission
+
+**Request Format:**
+
+```http
+POST /api/v1/payments/{payment_id}/mfa/verify HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "challenge_id": "mfa_ch_xyz789",
+  "method": "transaction_pin",
+  "credentials": {
+    "pin": "1234"
+  },
+  "device_id": "device_xyz789",
+  "timestamp": "2025-12-18T14:30:15Z"
+}
+```
+
+**Success Response:**
+
+```json
+{
+  "payment_id": "pay_abc123",
+  "challenge_id": "mfa_ch_xyz789",
+  "status": "verified",
+  "proceed_to_processing": true
+}
+```
+
+**Failure Response:**
+
+```json
+{
+  "payment_id": "pay_abc123",
+  "challenge_id": "mfa_ch_xyz789",
+  "status": "failed",
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Invalid credentials provided",
+    "attempts_remaining": 2
+  },
+  "retry_allowed": true
+}
+```
+
+#### 7.4.4 Biometric Authentication Protocol
+
+For biometric methods, clients MUST use platform-native biometric APIs and submit a cryptographic attestation rather than biometric data.
+
+**Attestation Requirements:**
+
+1. Client generates a signature over the payment challenge using a device-bound private key
+2. Payload format: `{payment_id}:{challenge_id}:{timestamp}`
+3. Signature algorithm: ECDSA P-256 or RSA-2048 minimum
+4. Timestamp MUST be within 30 seconds of current time
+
+**Example Request:**
+
+```json
+{
+  "challenge_id": "mfa_ch_xyz789",
+  "method": "biometric",
+  "credentials": {
+    "attestation": "MEUCIQDXz8fK...",
+    "biometric_type": "fingerprint",
+    "platform": "ios",
+    "device_id": "device_xyz789",
+    "timestamp": "2025-12-18T14:30:15Z"
+  }
+}
+```
+
+The TMCP Server forwards the attestation to the Wallet Service for verification. Wallet Service implementations MUST validate:
+- Device is registered for the user
+- Signature is valid for the registered public key
+- Timestamp is recent
+
+#### 7.4.5 Device Registration Protocol
+
+Before biometric MFA can be used, devices MUST register their public keys.
+
+**Registration Endpoint:**
+
+```http
+POST /wallet/v1/devices/register HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "device_id": "device_xyz789",
+  "device_name": "Alice's iPhone 15",
+  "platform": "ios",
+  "public_key": {
+    "algorithm": "ECDSA_P256",
+    "format": "SPKI",
+    "key_data": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE..."
+  },
+  "biometric_capabilities": ["face_id", "touch_id"]
+}
+```
+
+**Response:**
+
+```json
+{
+  "device_id": "device_xyz789",
+  "registered_at": "2025-12-18T14:30:00Z",
+  "status": "active",
+  "public_key_hash": "sha256:abcd1234..."
+}
+```
+
+#### 7.4.6 Wallet Service MFA Interface Requirements
+
+Wallet Service implementations that support MFA MUST implement the following gRPC interface (or REST equivalent):
+
+**GetMFARequirements:**
+- Input: wallet_id, payment_id, amount, currency
+- Output: mfa_required (bool), available_methods, requirement_type, max_attempts
+
+**VerifyMFAChallenge:**
+- Input: wallet_id, challenge_id, method, credentials, device_id
+- Output: verified (bool), attempts_remaining, locked (bool), locked_until
+
+**RegisterDevice:**
+- Input: wallet_id, device_id, public_key, biometric_capabilities
+- Output: registration_status, public_key_hash
+
+**ValidateBiometricAttestation:**
+- Input: device_id, attestation, payload
+- Output: valid (bool), error_reason
+
+The TMCP Server acts as protocol coordinator but delegates all MFA policy and validation logic to the Wallet Service.
 
 ---
 
@@ -1012,6 +1254,58 @@ Content-Type: application/json
 }
 ```
 
+#### 8.1.4 App Lifecycle Events
+
+**App Installation:**
+
+```json
+{
+  "type": "m.tween.miniapp.installed",
+  "content": {
+    "miniapp_id": "ma_shop_001",
+    "name": "Shopping Assistant",
+    "version": "1.0.0",
+    "classification": "verified",
+    "installed_at": "2025-12-18T14:30:00Z"
+  },
+  "sender": "@alice:tween.example"
+}
+```
+
+**App Update:**
+
+```json
+{
+  "type": "m.tween.miniapp.updated",
+  "content": {
+    "miniapp_id": "ma_official_wallet",
+    "previous_version": "2.0.0",
+    "new_version": "2.1.0",
+    "update_type": "minor",
+    "updated_at": "2025-12-18T14:30:00Z"
+  },
+  "sender": "@_tmcp_updater:tween.example"
+}
+```
+
+**App Uninstallation:**
+
+```json
+{
+  "type": "m.tween.miniapp.uninstalled",
+  "content": {
+    "miniapp_id": "ma_shop_001",
+    "uninstalled_at": "2025-12-18T14:30:00Z",
+    "reason": "user_initiated",
+    "data_cleanup": {
+      "storage_cleared": true,
+      "permissions_revoked": true
+    }
+  },
+  "sender": "@alice:tween.example"
+}
+```
+
 ---
 
 ## 9. Mini-App Lifecycle
@@ -1064,7 +1358,7 @@ Content-Type: application/json
     "client_secret": "secret_abc123",
     "webhook_secret": "whsec_def456"
   },
-  "created_at": "2024-12-18T14:30:00Z"
+  "created_at": "2025-12-18T14:30:00Z"
 }
 ```
 
@@ -1122,6 +1416,212 @@ Communication between mini-apps and the host application uses JSON-RPC 2.0 [RFC4
 | `tween.lifecycle.onShow` | Host → MA | Mini-app shown |
 | `tween.lifecycle.onHide` | Host → MA | Mini-app hidden |
 
+### 10.3 Mini-App Storage System
+
+#### 10.3.1 Overview
+
+TMCP provides a key-value storage protocol for mini-apps to persist user-specific data. Storage is automatically namespaced per mini-app and per user, ensuring isolation.
+
+**Storage Characteristics:**
+
+- **Namespaced**: Keys automatically scoped to mini-app and user
+- **Persistent**: Data survives app restarts
+- **Quota-Limited**: Per-user, per-mini-app limits enforced
+- **Eventually Consistent**: Offline operations supported
+- **Encrypted**: Server-side encryption at rest REQUIRED
+
+#### 10.3.2 Storage API Protocol
+
+**Get Value:**
+
+```http
+GET /api/v1/storage/{key} HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**Response:**
+```json
+{
+  "key": "cart_items",
+  "value": "{\"items\":[{\"id\":\"prod_123\",\"qty\":2}]}",
+  "created_at": "2025-12-18T10:00:00Z",
+  "updated_at": "2025-12-18T14:30:00Z",
+  "metadata": {
+    "size_bytes": 156,
+    "content_type": "application/json"
+  }
+}
+```
+
+**Set Value:**
+
+```http
+PUT /api/v1/storage/{key} HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "value": "{\"items\":[{\"id\":\"prod_123\",\"qty\":2}]}",
+  "ttl": 86400,
+  "metadata": {
+    "content_type": "application/json"
+  }
+}
+```
+
+**Delete Value:**
+
+```http
+DELETE /api/v1/storage/{key} HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**List Keys:**
+
+```http
+GET /api/v1/storage?prefix=cart_&limit=100 HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+#### 10.3.3 Storage Quotas
+
+**Protocol-Defined Limits:**
+
+| Resource | Limit | Description |
+|----------|-------|-------------|
+| Total Storage | 10 MB | Per mini-app, per user |
+| Maximum Key Length | 256 bytes | UTF-8 encoded |
+| Maximum Value Size | 1 MB | Per key |
+| Maximum Keys | 1000 | Per mini-app, per user |
+| Operations Per Minute | 100 | Rate limit |
+
+When quotas are exceeded:
+
+```json
+{
+  "error": {
+    "code": "STORAGE_QUOTA_EXCEEDED",
+    "message": "Storage quota exceeded",
+    "details": {
+      "current_usage_bytes": 10485760,
+      "quota_bytes": 10485760
+    }
+  }
+}
+```
+
+#### 10.3.4 Time-To-Live (TTL)
+
+Keys MAY specify a TTL in seconds. After expiration, keys MUST be automatically deleted.
+
+**TTL Constraints:**
+- Minimum: 60 seconds
+- Maximum: 2592000 seconds (30 days)
+- Default: No expiration (persistent)
+
+#### 10.3.5 Offline Storage Protocol
+
+Clients SHOULD implement offline caching to support disconnected operation. The protocol supports eventual consistency through client-side write queues.
+
+**Offline Write Behavior:**
+
+When offline, clients SHOULD:
+1. Cache writes locally (e.g., IndexedDB)
+2. Queue operations for synchronization
+3. Sync when connectivity is restored
+
+**Conflict Resolution:**
+
+For concurrent modifications, protocol uses last-write-wins based on `client_timestamp`:
+
+```http
+PUT /api/v1/storage/{key} HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "value": "offline_written_value",
+  "client_timestamp": 1703001234
+}
+```
+
+If server value is newer, response indicates conflict:
+
+```json
+{
+  "key": "cart_items",
+  "success": true,
+  "conflict_detected": true,
+  "resolution": "server_wins",
+  "server_value": "...",
+  "updated_at": "2025-12-18T14:30:00Z"
+}
+```
+
+#### 10.3.6 Batch Operations Protocol
+
+For efficiency, protocol supports batch operations:
+
+**Batch Get:**
+```http
+POST /api/v1/storage/batch/get HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "keys": ["cart_items", "user_preferences", "session_data"]
+}
+```
+
+**Batch Set:**
+```http
+POST /api/v1/storage/batch/set HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "items": [
+    {"key": "cart_items", "value": "{...}"},
+    {"key": "user_preferences", "value": "{...}", "ttl": 86400}
+  ]
+}
+```
+
+#### 10.3.7 Storage Scopes
+
+Storage operations require appropriate OAuth scopes:
+
+| Scope | Operations |
+|-------|------------|
+| `storage:read` | GET, LIST |
+| `storage:write` | PUT, DELETE, Batch operations |
+
+These scopes are automatically granted to all mini-apps and do not require explicit user approval, as storage is already isolated per mini-app and per user.
+
+#### 10.3.8 Storage Security Requirements
+
+**Encryption:**
+- All values MUST be encrypted at rest using AES-256 or stronger
+- Encryption keys MUST be rotated periodically
+- Per-user encryption keys RECOMMENDED
+
+**Access Control:**
+- Storage operations MUST validate TEP token
+- Cross-user access MUST be prevented
+- Cross-mini-app access MUST be prevented
+
+**Data Lifecycle:**
+- Storage MUST be deleted when user uninstalls mini-app
+- Storage MUST be deleted when user account is deleted
+- TTL expiration MUST be enforced
+
 ---
 
 ## 11. Security Considerations
@@ -1157,6 +1657,31 @@ Communication between mini-apps and the host application uses JSON-RPC 2.0 [RFC4
 
 ### 11.4 Rate Limiting
 
+Rate limits SHOULD be enforced using token bucket or sliding window algorithms.
+
+**Required Rate Limit Headers:**
+
+```http
+HTTP/1.1 200 OK
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 87
+X-RateLimit-Reset: 1704067260
+```
+
+When rate limit is exceeded:
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many requests",
+    "retry_after": 45
+  }
+}
+```
+
+**Status Code:** 429 Too Many Requests
+
 | Operation | Limit | Window |
 |-----------|-------|--------|
 | Token generation | 10 | 1 minute |
@@ -1179,7 +1704,7 @@ Communication between mini-apps and the host application uses JSON-RPC 2.0 [RFC4
       "required_amount": 15000.00,
       "available_balance": 8000.00
     },
-    "timestamp": "2024-12-18T14:30:00Z",
+    "timestamp": "2025-12-18T14:30:00Z",
     "request_id": "req_abc123"
   }
 }
@@ -1197,6 +1722,13 @@ Communication between mini-apps and the host application uses JSON-RPC 2.0 [RFC4
 | `MINIAPP_NOT_FOUND` | 404 | Mini-app not registered | No |
 | `INVALID_SIGNATURE` | 401 | Invalid payment signature | No |
 | `DUPLICATE_TRANSACTION` | 409 | Idempotency key conflict | No |
+| `MFA_REQUIRED` | 402 | Multi-factor authentication required | No |
+| `MFA_LOCKED` | 429 | Too many failed MFA attempts | No |
+| `INVALID_MFA_CREDENTIALS` | 401 | Invalid MFA credentials | Yes |
+| `STORAGE_QUOTA_EXCEEDED` | 413 | Storage quota exceeded | No |
+| `APP_NOT_REMOVABLE` | 403 | Official app cannot be removed | No |
+| `APP_NOT_FOUND` | 404 | Mini-app not found | No |
+| `DEVICE_NOT_REGISTERED` | 400 | Device not registered for MFA | No |
 
 ---
 
@@ -1279,7 +1811,538 @@ Request registration of TMCP-specific scopes:
 
 ---
 
-## 16. Appendices
+## 16. Official and Preinstalled Mini-Apps
+
+### 16.1 Overview
+
+The TMCP protocol distinguishes between third-party mini-apps and official applications. Official mini-apps MAY be preinstalled in the Element X/Classic fork and receive elevated permissions.
+
+### 16.2 Mini-App Classification
+
+**Classification Types:**
+
+| Type | Description | Trust Model |
+|------|-------------|-------------|
+| `official` | Developed by Tween | Elevated permissions, preinstalled |
+| `verified` | Vetted third-party | Standard permissions, verified developer |
+| `community` | Unverified third-party | Standard permissions, caveat emptor |
+| `beta` | Testing phase | Limited availability, opt-in |
+
+Classification is assigned during registration and affects app capabilities and distribution.
+
+### 16.3 Official Mini-App Registration
+
+Official apps are registered with special attributes:
+
+```http
+POST /mini-apps/v1/register HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <ADMIN_TOKEN>
+Content-Type: application/json
+
+{
+  "name": "Tween Wallet",
+  "classification": "official",
+  "developer": {
+    "company_name": "Tween IM",
+    "official": true
+  },
+  "preinstall": {
+    "enabled": true,
+    "platforms": ["ios", "android", "web", "desktop"],
+    "install_mode": "mandatory"
+  },
+  "elevated_permissions": {
+    "privileged_apis": [
+      "system:notifications",
+      "wallet:admin"
+    ]
+  }
+}
+```
+
+**Install Modes:**
+
+| Mode | Description | Removability |
+|------|-------------|--------------|
+| `mandatory` | Required system component | Cannot be removed |
+| `default` | Preinstalled by default | Can be removed by user |
+| `optional` | Available but not installed | User must explicitly install |
+
+### 16.4 Preinstallation Manifest
+
+Official mini-apps are defined in a manifest file embedded in the Element X/Classic fork client:
+
+**Manifest Format (preinstalled_apps.json):**
+
+```json
+{
+  "version": "1.0",
+  "last_updated": "2025-12-18T00:00:00Z",
+  "apps": [
+    {
+      "miniapp_id": "ma_official_wallet",
+      "name": "Wallet",
+      "category": "finance",
+      "classification": "official",
+      "install_mode": "mandatory",
+      "removable": false,
+      "icon": "builtin://icons/wallet.png",
+      "entry_point": "tween-internal://wallet",
+      "display_order": 1
+    }
+  ]
+}
+```
+
+**Manifest Loading:**
+
+On first launch, clients MUST:
+1. Load embedded manifest
+2. Register official apps with TMCP Server
+3. Initialize app sandboxes
+4. Mark bootstrap complete
+
+### 16.5 Internal URL Scheme
+
+Official apps MAY use the `tween-internal://` URL scheme for faster loading from embedded bundles.
+
+**URL Format:**
+```
+tween-internal://{miniapp_id}[/{path}][?{query}]
+```
+
+**Examples:**
+```
+tween-internal://wallet
+tween-internal://wallet/send?recipient=@bob:tween.example
+```
+
+Clients MUST resolve internal URLs to embedded app bundles rather than loading from network.
+
+### 16.6 Mini-App Store Protocol
+
+#### 16.6.1 App Discovery
+
+**Get Categories:**
+
+```http
+GET /api/v1/store/categories HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**Browse Apps:**
+
+```http
+GET /api/v1/store/apps?category=shopping&sort=popular&limit=20 HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**Query Parameters:**
+
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `category` | Category ID or "all" | "all" |
+| `sort` | `popular`, `recent`, `rating`, `name` | "popular" |
+| `classification` | `official`, `verified`, `community` | (all) |
+| `limit` | 1-100 | 20 |
+| `offset` | Integer | 0 |
+
+**Response Format:**
+
+```json
+{
+  "apps": [
+    {
+      "miniapp_id": "ma_shop_001",
+      "name": "Shopping Assistant",
+      "classification": "verified",
+      "category": "shopping",
+      "rating": {
+        "average": 4.5,
+        "count": 1250
+      },
+      "install_count": 50000,
+      "icon_url": "https://cdn.tween.example/icons/shop.png",
+      "version": "1.2.0",
+      "preinstalled": false,
+      "installed": false
+    }
+  ],
+  "pagination": {
+    "total": 145,
+    "limit": 20,
+    "offset": 0,
+    "has_more": true
+  }
+}
+```
+
+#### 16.6.2 Installation Protocol
+
+**Install Mini-App:**
+
+```http
+POST /api/v1/store/apps/{miniapp_id}/install HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**Response:**
+
+```json
+{
+  "miniapp_id": "ma_shop_001",
+  "status": "installing",
+  "install_id": "install_xyz789"
+}
+```
+
+**Uninstall Mini-App:**
+
+```http
+DELETE /api/v1/store/apps/{miniapp_id}/install HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+Attempting to uninstall a `removable: false` official app MUST return:
+
+```json
+{
+  "error": {
+    "code": "APP_NOT_REMOVABLE",
+    "message": "This system app cannot be removed"
+  }
+}
+```
+
+#### 16.6.3 App Ranking Protocol
+
+Apps are ranked based on multiple factors:
+
+**Ranking Factors:**
+
+| Factor | Weight | Metric |
+|--------|--------|--------|
+| Install count | 30% | Total installations |
+| Active users | 25% | 30-day active users |
+| Rating | 20% | Average user rating |
+| Engagement | 15% | Daily sessions per user |
+| Recency | 10% | Recent updates |
+
+**Trending Apps:**
+
+Apps are "trending" when exhibiting:
+- Install growth rate >20% week-over-week
+- Rating improvements
+- Increased engagement metrics
+
+### 16.7 Official App Privileges
+
+Official apps MAY access privileged scopes unavailable to third-party apps:
+
+**Privileged Scopes:**
+
+| Scope | Description | Official Only |
+|-------|-------------|---------------|
+| `system:notifications` | System-level notifications | Yes |
+| `wallet:admin` | Wallet administration | Yes |
+| `messaging:broadcast` | Broadcast messages | Yes |
+| `analytics:detailed` | Detailed analytics | Yes |
+
+### 16.8 Update Management Protocol
+
+#### 16.8.1 Update Check
+
+**Check for Updates:**
+
+```http
+POST /api/v1/client/check-updates HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "installed_apps": [
+    {
+      "miniapp_id": "ma_official_wallet",
+      "current_version": "2.0.0"
+    }
+  ],
+  "platform": "ios",
+  "client_version": "2.1.0"
+}
+```
+
+**Response:**
+
+```json
+{
+  "updates_available": [
+    {
+      "miniapp_id": "ma_official_wallet",
+      "current_version": "2.0.0",
+      "new_version": "2.1.0",
+      "update_type": "minor",
+      "mandatory": false,
+      "release_date": "2025-12-18T00:00:00Z",
+      "release_notes": "Bug fixes and improvements",
+      "download": {
+        "url": "https://cdn.tween.example/bundles/wallet-2.1.0.bundle",
+        "size_bytes": 3355443,
+        "hash": "sha256:abcd1234...",
+        "signature": "signature_xyz..."
+      }
+    }
+  ]
+}
+```
+
+**Update Verification Requirements:**
+
+Clients MUST verify:
+1. SHA-256 hash matches `download.hash`
+2. Cryptographic signature is valid
+3. Signature is from trusted Tween signing key
+
+**Update Installation:**
+
+Official apps with `install_mode: mandatory` MUST be updated automatically. Other apps MAY prompt user for approval.
+
+#### 16.8.2 Client Bootstrap Protocol
+
+On first launch, clients MUST perform bootstrap:
+
+```http
+POST /api/v1/client/bootstrap HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <MATRIX_ACCESS_TOKEN>
+Content-Type: application/json
+
+{
+  "client_version": "2.1.0",
+  "platform": "ios",
+  "manifest_version": "1.0",
+  "device_id": "device_xyz789"
+}
+```
+
+**Response:**
+
+```json
+{
+  "bootstrap_id": "bootstrap_abc123",
+  "official_apps": [
+    {
+      "miniapp_id": "ma_official_wallet",
+      "bundle_url": "https://cdn.tween.example/bundles/wallet-2.1.0.bundle",
+      "bundle_hash": "sha256:abcd1234...",
+      "credentials": {
+        "client_id": "ma_official_wallet",
+        "privileged_token": "token_abc123"
+      }
+    }
+  ]
+}
+```
+
+### 16.9 Official App Authentication
+
+Official apps use the same OAuth 2.0 + PKCE flow as third-party apps but with pre-approved scopes to avoid user consent prompts for basic operations:
+
+**Modified OAuth Flow for Official Apps:**
+
+Official apps follow the standard PKCE flow defined in Section 4.2.1, but:
+- Basic scopes (user:read, storage:read/write) are pre-approved
+- Privileged scopes still require explicit user consent
+- User consent UI indicates which scopes are pre-approved vs. requested
+
+**Token Response for Official Apps:**
+
+```json
+{
+  "access_token": "tep.eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "rt_abc123...",
+  "scope": "user:read storage:read storage:write",
+  "user_id": "@alice:tween.example",
+  "wallet_id": "tw_user_12345",
+  "preapproved_scopes": ["user:read", "storage:read", "storage:write"],
+  "privileged": false
+}
+```
+
+**Privileged Token Response:**
+
+For privileged operations, official apps receive tokens with additional claims:
+
+```json
+{
+  "access_token": "tep.privileged_token...",
+  "token_type": "Bearer",
+  "expires_in": 86400,
+  "scope": "user:read wallet:admin system:notifications",
+  "user_id": "@alice:tween.example",
+  "wallet_id": "tw_user_12345",
+  "privileged": true,
+  "privileged_until": 1704150400
+}
+```
+
+**Security Requirements for Official Apps:**
+
+Official apps MUST implement additional security measures:
+- Code signing verification for all updates
+- Audit logging for privileged operations
+- Secure storage of privileged credentials
+- Regular security reviews by Tween
+
+### 16.10 OAuth Server Implementation with Keycloak
+
+**Recommended Implementation: Keycloak Integration**
+
+For production deployments, TMCP implementations are RECOMMENDED to use Keycloak as the OAuth 2.0 authorization server. Keycloak provides enterprise-grade identity and access management with the following advantages:
+
+**Integration Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                 TWEEN CLIENT APPLICATION                 │
+│  ┌──────────────┐         ┌──────────────────────┐    │
+│  │ Matrix SDK   │         │ TMCP Bridge          │    │
+│  │ (Element)    │◄───────►│ (Mini-App Runtime)   │    │
+│  └──────────────┘         └──────────────────────┘    │
+└────────────┬──────────────────────┬───────────────────┘
+              │                      │
+              │ Matrix Client-       │ TMCP Protocol
+              │ Server API           │ (JSON-RPC 2.0)
+              │                      │
+              ↓                      ↓
+┌──────────────────┐     ┌──────────────────────────┐
+│ Matrix Homeserver│◄───►│   TMCP Server            │
+│ (Synapse)        │     │   (Application Service)  │
+└──────────────────┘     └──────────────────────────┘
+         │                          │
+         │ OAuth 2.0              ├──→ Keycloak Realm
+         │ Authorization              │   (TMCP Apps)
+         │                          ├──→ Client Registry
+         │                          └──→ Token Validation
+         │
+         ↓
+┌──────────────────────────────────────────────────┐
+│            KEYCLOAK SERVER                │
+│  ┌────────────────────────────────────┐   │
+│  │ TMCP Realm Configuration      │   │
+│  │ Client Registration           │   │
+│  │ Token Service               │   │
+│  │ MFA Service                │   │
+│  └────────────────────────────────────┘   │
+└──────────────────────────────────────────────────┘
+```
+
+**Keycloak Configuration for TMCP:**
+
+**Realm Configuration:**
+```json
+{
+  "realm": "tmcp",
+  "displayName": "TMCP Mini-Apps",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtection": true,
+  "maxFailureCount": 5,
+  "failureResetTimeInSeconds": 900,
+  "notBefore": 1704067200,
+  "accessTokenLifespan": 3600,
+  "ssoSessionMaxLifespan": 86400,
+  "accessTokenLifespanRememberMe": 2592000,
+  "refreshTokenLifespan": 2592000,
+  "refreshTokenMaxReuse": 0,
+  "otpPolicy": {
+    "type": "totp",
+    "digits": 6,
+    "period": 30,
+    "algorithm": "HmacSHA256"
+  },
+  "webAuthnPasswordPolicy": {
+    "minLength": 8,
+    "maxLength": 128,
+    "hashAlgorithm": "pbkdf2-sha256"
+  },
+  "clientScopes": [
+    "user:read",
+    "user:read:extended",
+    "user:read:contacts",
+    "wallet:balance",
+    "wallet:pay",
+    "wallet:history",
+    "messaging:send",
+    "messaging:read",
+    "storage:read",
+    "storage:write"
+  ],
+  "officialAppScopes": [
+    "system:notifications",
+    "wallet:admin",
+    "messaging:broadcast",
+    "analytics:detailed"
+  ]
+}
+```
+
+**Client Registration:**
+Each mini-app is registered as a Keycloak client with:
+- Client ID matching mini-app ID
+- Standard OAuth 2.0 flow with PKCE
+- Redirect URIs configured for each mini-app
+- Access type: confidential
+- Valid redirect URIs enforced
+- Service accounts enabled for privileged operations
+
+**Token Service Configuration:**
+- JWT signing with TMCP realm keys
+- Custom claims for mini-app context and classification
+- Standard and privileged scope enforcement
+- Token introspection endpoint for TMCP Server validation
+
+**MFA Service Integration:**
+- MFA policies enforced at Keycloak level
+- Device registration and management
+- Biometric attestation validation
+- Integration with Wallet Service for MFA verification
+
+**Benefits of Keycloak Integration:**
+
+1. **Enterprise Security**: Advanced security features, brute force protection, MFA policies
+2. **Centralized Management**: Single admin console for all OAuth clients and scopes
+3. **Audit Capabilities**: Comprehensive audit logging for compliance
+4. **Scalability**: Horizontal scaling with clustering support
+5. **Protocol Compliance**: Full OAuth 2.0 and OpenID Connect compliance
+6. **Extensibility**: Custom protocol mappers for TMCP-specific requirements
+7. **Multi-tenancy**: Support for multiple TMCP deployments from single Keycloak instance
+
+**Implementation Notes:**
+
+- TMCP Server acts as a Resource Owner in OAuth 2.0 terms
+- Keycloak handles Authorization Server responsibilities
+- Token validation and introspection endpoints proxy to Keycloak
+- Privileged scopes mapped to Keycloak client-level permissions
+- MFA challenges proxied through Keycloak's authentication flows
+
+This integration maintains TMCP's security model while leveraging Keycloak's enterprise-grade identity management capabilities.
+
+---
+
+## 17. Appendices
 
 ### Appendix A: Complete Protocol Flow Example
 
