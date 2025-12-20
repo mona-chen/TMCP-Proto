@@ -655,9 +655,18 @@ Authorization: Bearer <TEP_TOKEN>
     "daily_used": 25000.00,
     "transaction_limit": 50000.00
   },
+  "verification": {
+    "level": 2,
+    "level_name": "ID Verified",
+    "features": ["standard_transactions", "weekly_limit"],
+    "can_upgrade": true,
+    "next_level": 3,
+    "upgrade_requirements": ["address_proof", "enhanced_id"]
+  },
   "status": "active"
 }
 ```
+
 
 #### 6.2.2 Transaction History
 
@@ -693,7 +702,440 @@ Authorization: Bearer <TEP_TOKEN>
     "has_more": true
   }
 }
+J```
+
+### 6.3 User Identity Resolution Protocol
+
+#### 6.3.1 Overview
+
+The TMCP protocol provides a standardized mechanism for resolving Matrix User IDs to Wallet IDs. This resolution is essential for:
+
+1. **P2P Payments**: Sending money to chat participants
+2. **Payment Requests**: Requesting money from specific users
+3. **Transaction History**: Displaying sender/recipient information
+4. **Profile Display**: Showing wallet status in user profiles
+
+**Resolution Flow:**
+
 ```
+Matrix Room → User clicks "Send Money" to @bob:tween.example
+     ↓
+Client → TMCP Server: Resolve Matrix ID to Wallet ID
+     ↓
+TMCP Server → Wallet Service: Get wallet for user
+     ↓
+Wallet Service → TMCP Server: Return wallet_id or error
+     ↓
+TMCP Server → Client: wallet_id or NO_WALLET error
+     ↓
+Client: Proceed with payment or show "User has no wallet"
+```
+
+#### 6.3.2 User Resolution Endpoint
+
+**Resolve Single User:**
+
+```http
+GET /wallet/v1/resolve/@bob:tween.example HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+**Response (User has wallet):**
+```json
+{
+  "user_id": "@bob:tween.example",
+  "wallet_id": "tw_user_67890",
+  "wallet_status": "active",
+  "display_name": "Bob Smith",
+  "avatar_url": "mxc://tween.example/avatar123",
+  "payment_enabled": true,
+  "created_at": "2024-01-15T10:00:00Z"
+}
+```
+
+**Response (User has no wallet):**
+```json
+{
+  "error": {
+    "code": "NO_WALLET",
+    "message": "User does not have a wallet",
+    "user_id": "@bob:tween.example",
+    "can_invite": true,
+    "invite_message": "Invite Bob to create a Tween Wallet"
+  }
+}
+```
+
+**HTTP Status Codes:**
+- 200 OK: User has active wallet
+- 404 Not Found: User has no wallet (with NO_WALLET error body)
+- 403 Forbidden: User has wallet but it's suspended/inactive
+- 401 Unauthorized: Invalid TEP token
+
+#### 6.3.3 Batch User Resolution
+
+For efficiency when loading room member wallet statuses:
+
+**Resolve Multiple Users:**
+
+```http
+POST /wallet/v1/resolve/batch HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "user_ids": [
+    "@alice:tween.example",
+    "@bob:tween.example",
+    "@charlie:tween.example"
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "user_id": "@alice:tween.example",
+      "wallet_id": "tw_user_12345",
+      "wallet_status": "active",
+      "payment_enabled": true
+    },
+    {
+      "user_id": "@bob:tween.example",
+      "wallet_id": "tw_user_67890",
+      "wallet_status": "active",
+      "payment_enabled": true
+    },
+    {
+      "user_id": "@charlie:tween.example",
+      "error": {
+        "code": "NO_WALLET",
+        "message": "User does not have a wallet"
+      }
+    }
+  ],
+  "resolved_count": 2,
+  "total_count": 3
+}
+```
+
+#### 6.3.4 Wallet Registration and Mapping
+
+**Wallet Creation Flow:**
+
+When a Matrix user creates a wallet, the mapping is established:
+
+```http
+POST /wallet/v1/register HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <MATRIX_ACCESS_TOKEN>
+Content-Type: application/json
+
+{
+  "user_id": "@alice:tween.example",
+  "currency": "USD",
+  "initial_settings": {
+    "mfa_enabled": false,
+    "daily_limit": 100000.00
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "wallet_id": "tw_user_12345",
+  "user_id": "@alice:tween.example",
+  "status": "active",
+  "balance": {
+    "available": 0.00,
+    "currency": "USD"
+  },
+  "created_at": "2025-12-18T14:30:00Z"
+}
+```
+
+**Mapping Storage:**
+
+The Wallet Service MUST maintain a bidirectional mapping:
+
+| Matrix User ID | Wallet ID | Status | Created At |
+|----------------|-----------|--------|------------|
+| @alice:tween.example | tw_user_12345 | active | 2025-12-18T14:30:00Z |
+| @bob:tween.example | tw_user_67890 | active | 2025-12-15T09:00:00Z |
+| @mona:tween.im | tw_user_11111 | active | 2024-12-01T00:00:00Z |
+
+**Wallet Service Interface Requirements:**
+
+Wallet Service implementations MUST provide:
+
+```
+GetWalletByUserId(user_id: string) → wallet_id, status
+GetWalletsByUserIds(user_ids: []string) → []WalletMapping
+CreateWallet(user_id: string, settings: WalletSettings) → wallet_id
+```
+
+#### 6.3.5 P2P Payment with Matrix User ID
+
+The P2P transfer endpoint (Section 7.2.1) accepts Matrix User IDs directly:
+
+**Updated P2P Initiate Transfer:**
+
+```http
+POST /wallet/v1/p2p/initiate HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "recipient": "@bob:tween.example",
+  "amount": 5000.00,
+  "currency": "USD",
+  "note": "Lunch money",
+  "room_id": "!chat123:tween.example",
+  "idempotency_key": "unique-uuid-here"
+}
+```
+
+**TMCP Server Processing:**
+
+1. Validate TEP token and extract sender's user_id and wallet_id
+2. Resolve recipient Matrix ID to wallet_id:
+   - Call Wallet Service: `GetWalletByUserId("@bob:tween.example")`
+   - If no wallet found, return NO_WALLET error
+   - If wallet suspended, return WALLET_SUSPENDED error
+3. Validate room membership (both users must be in the specified room)
+4. Proceed with payment authorization flow
+
+**Error Response (No Wallet):**
+
+```json
+{
+  "error": {
+    "code": "RECIPIENT_NO_WALLET",
+    "message": "Recipient does not have a wallet",
+    "recipient": "@bob:tween.example",
+    "can_invite": true,
+    "invite_url": "tween://invite-wallet?user=@bob:tween.example"
+  }
+}
+```
+
+#### 6.3.6 Application Service Role in User Resolution
+
+The TMCP Server (Application Service) acts as the resolution coordinator:
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────┐
+│               TMCP Server (AS)                      │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐ │
+│  │      User Resolution Service                 │ │
+│  │                                              │ │
+│  │  • Maintains Matrix User ID → Wallet ID map │ │
+│  │  • Caches resolution results (5 min TTL)    │ │
+│  │  • Validates room membership                │ │
+│  │  • Proxies to Wallet Service               │ │
+│  └──────────────────────────────────────────────┘ │
+└────────────────┬────────────────────────────────────┘
+                 │
+                 ↓
+┌─────────────────────────────────────────────────────┐
+│           Wallet Service                            │
+│                                                     │
+│  • Stores User ID ↔ Wallet ID mappings             │
+│  • Enforces wallet status (active/suspended)       │
+│  • Returns wallet metadata                         │
+└─────────────────────────────────────────────────────┘
+```
+
+**AS Responsibilities:**
+
+1. **Caching**: Cache user→wallet mappings to reduce Wallet Service load
+   - Cache TTL: 5 minutes (RECOMMENDED)
+   - Cache invalidation on wallet status changes
+   - In-memory cache with Redis backup for multi-instance deployments
+
+2. **Validation**: Verify room membership before exposing wallet information
+   - User A can only resolve User B's wallet if they share a room
+   - Prevents wallet enumeration attacks
+
+3. **Rate Limiting**: Apply rate limits to resolution requests
+   - 100 requests per minute per user (RECOMMENDED)
+   - 1000 batch resolution requests per hour per user
+
+#### 6.3.7 Room Context and Privacy
+
+**Privacy Constraint:**
+
+Users MAY only resolve wallet information for Matrix users they share a room with. This prevents enumeration attacks.
+
+**Validation Flow:**
+
+```
+Client requests resolution of @bob:tween.example
+     ↓
+TMCP Server receives request with TEP token
+     ↓
+Extract requester: @alice:tween.example from token
+     ↓
+Query Matrix Homeserver: Do @alice and @bob share any room?
+     ↓
+If YES: Proceed with wallet resolution
+If NO: Return 403 Forbidden
+```
+
+**Privacy-Preserving Resolution:**
+
+```http
+GET /wallet/v1/resolve/@bob:tween.example?room_id=!chat123:tween.example HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+```
+
+The `room_id` parameter is OPTIONAL but RECOMMENDED for explicit room context validation.
+
+#### 6.3.8 Client Implementation Example
+
+**P2P Payment Button in Chat:**
+
+```typescript
+// Client-side implementation
+class PaymentButton {
+  async sendMoney(recipientUserId: string, roomId: string) {
+    try {
+      // Step 1: Resolve recipient's wallet
+      const resolution = await tweenSDK.wallet.resolveUser(recipientUserId);
+      
+      if (!resolution.wallet_id) {
+        // Show "Invite to Wallet" dialog
+        this.showInviteDialog(recipientUserId);
+        return;
+      }
+      
+      // Step 2: Show payment dialog with recipient info
+      const payment = await tweenSDK.wallet.requestPayment({
+        recipient: recipientUserId,
+        room_id: roomId,
+        // UI will populate amount
+      });
+      
+      // Step 3: Process payment
+      await this.processPayment(payment);
+      
+    } catch (error) {
+      if (error.code === 'RECIPIENT_NO_WALLET') {
+        this.showInviteDialog(recipientUserId);
+      } else if (error.code === 'WALLET_SUSPENDED') {
+        this.showError('Recipient wallet is suspended');
+      } else {
+        this.showError(error.message);
+      }
+    }
+  }
+}
+```
+
+#### 6.3.9 Matrix Room Member Wallet Status
+
+**Enhanced Room State Event:**
+
+Clients MAY display wallet status indicators for room members:
+
+```typescript
+// Client queries all room members' wallet status
+const members = await matrixClient.getRoomMembers(roomId);
+const userIds = members.map(m => m.userId);
+
+const walletStatuses = await tmcpServer.resolveUsersBatch(userIds);
+
+// Display UI indicators:
+// @alice:tween.example ✓ (has wallet)
+// @bob:tween.example ✓ (has wallet)
+// @charlie:tween.example ⚠ (no wallet - invite)
+```
+
+#### 6.3.10 Wallet Invitation Protocol
+
+When a user attempts to send money to someone without a wallet:
+
+**Invite Matrix Event:**
+
+```json
+{
+  "type": "m.tween.wallet.invite",
+  "content": {
+    "msgtype": "m.tween.wallet_invite",
+    "body": "Alice invited you to create a Tween Wallet",
+    "inviter": "@alice:tween.example",
+    "invitee": "@charlie:tween.example",
+    "invite_url": "https://tween.example/wallet/create?inviter=alice",
+    "incentive": {
+      "type": "signup_bonus",
+      "amount": 1000.00,
+      "currency": "USD",
+      "expires_at": "2025-12-25T00:00:00Z"
+    }
+  },
+  "room_id": "!chat123:tween.example",
+  "sender": "@alice:tween.example"
+}
+```
+
+### 6.4 External Account Interface
+
+#### 6.4.1 Overview
+
+The TMCP protocol defines interfaces for external account operations, which are implemented by Wallet Service. These interfaces enable wallet funding and withdrawals through external financial accounts.
+
+**Supported Account Types:**
+- Bank accounts
+- Debit/Credit cards
+- Digital wallets
+- Mobile money providers
+
+#### 6.4.2 External Account Interface
+
+The Wallet Service MUST implement these interfaces for external account operations:
+
+```
+LinkExternalAccount(user_id, account_details) → external_account_id
+VerifyExternalAccount(account_id, verification_data) → status
+FundWallet(user_id, source_account_id, amount) → funding_id
+WithdrawToAccount(user_id, destination_account_id, amount) → withdrawal_id
+```
+
+#### 6.4.3 Protocol Response Format
+
+All external account operations follow the standard response format defined in Section 12.1.
+
+### 6.5 Withdrawal Interface
+
+#### 6.5.1 Overview
+
+The TMCP protocol defines interfaces for withdrawal operations, which are implemented by Wallet Service. These interfaces enable users to withdraw funds from their wallets.
+
+#### 6.5.2 Withdrawal Interface
+
+The Wallet Service MUST implement these interfaces for withdrawal operations:
+
+```
+InitiateWithdrawal(user_id, destination, amount) → withdrawal_id
+ApproveWithdrawal(withdrawal_id, approval_data) → status
+GetWithdrawalStatus(withdrawal_id) → withdrawal_details
+```
+
+#### 6.5.3 Protocol Response Format
+
+All withdrawal operations follow the standard response format defined in Section 12.1.
 
 ---
 
@@ -704,6 +1146,14 @@ Authorization: Bearer <TEP_TOKEN>
 Payments transition through well-defined states:
 
 ```
+P2P Transfer States:
+INITIATED → PENDING_RECIPIENT_ACCEPTANCE → COMPLETED
+    ↓              ↓
+CANCELLED    EXPIRED (24h)
+    ↓              ↓
+REJECTED ←─────────┘
+
+Mini-App Payment States:
 INITIATED → AUTHORIZED → PROCESSING → COMPLETED
               ↓              ↓
           EXPIRED        FAILED
@@ -711,6 +1161,11 @@ INITIATED → AUTHORIZED → PROCESSING → COMPLETED
           CANCELLED ←───────┘
               ↓
           MFA_REQUIRED → (after MFA verification) → AUTHORIZED
+
+Group Gift States:
+CREATED → ACTIVE → PARTIALLY_OPENED → FULLY_OPENED
+    ↓         ↓
+EXPIRED   EXPIRED
 ```
 
 ### 7.2 Peer-to-Peer Transfer
@@ -781,6 +1236,162 @@ The TMCP Server MUST create a Matrix event documenting the transfer:
   },
   "room_id": "!chat:tween.example",
   "sender": "@alice:tween.example"
+}
+```
+
+#### 7.2.3 Recipient Acceptance Protocol
+
+For enhanced security and user control, P2P transfers require explicit recipient acceptance before funds are released. This two-step confirmation pattern prevents accidental transfers and gives recipients control over incoming payments.
+
+**Acceptance Flow:**
+
+```
+INITIATED → PENDING_RECIPIENT_ACCEPTANCE → COMPLETED
+    ↓              ↓
+CANCELLED    EXPIRED (24h)
+    ↓              ↓
+REJECTED ←─────────┘
+```
+
+**Acceptance Window:** 24 hours (RECOMMENDED)
+**Auto-Expiry:** Transfers not accepted within window are auto-cancelled and refunded
+
+**Accept Transfer:**
+
+```http
+POST /wallet/v1/p2p/{transfer_id}/accept HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <RECIPIENT_TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "device_id": "device_xyz789",
+  "timestamp": "2025-12-18T14:32:00Z"
+}
+```
+
+**Response:**
+```json
+{
+  "transfer_id": "p2p_abc123",
+  "status": "completed",
+  "amount": 5000.00,
+  "recipient": {
+    "user_id": "@bob:tween.example",
+    "wallet_id": "tw_user_67890"
+  },
+  "accepted_at": "2025-12-18T14:32:00Z",
+  "new_balance": 12050.00
+}
+```
+
+**Reject Transfer:**
+
+```http
+POST /wallet/v1/p2p/{transfer_id}/reject HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <RECIPIENT_TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "reason": "user_declined",
+  "message": "Thanks but not needed"
+}
+```
+
+**Response:**
+```json
+{
+  "transfer_id": "p2p_abc123",
+  "status": "rejected",
+  "rejected_at": "2025-12-18T14:32:00Z",
+  "refund_initiated": true,
+  "refund_expected_at": "2025-12-18T14:32:30Z"
+}
+```
+
+**Auto-Expiry Processing:**
+
+TMCP Server MUST run scheduled jobs to process expired transfers:
+
+```javascript
+// TMCP Server scheduled job runs every hour
+async function processExpiredTransfers() {
+  const expired = await db.getTransfersByStatus('pending_recipient_acceptance')
+    .where('created_at < NOW() - INTERVAL 24 HOURS');
+  
+  for (const transfer of expired) {
+    // Refund to sender's wallet
+    await walletService.refundTransfer(transfer.id);
+    
+    // Update Matrix event
+    await matrixClient.sendEvent(transfer.room_id, {
+      type: 'm.tween.wallet.p2p.status',
+      content: {
+        transfer_id: transfer.id,
+        status: 'expired',
+        expired_at: new Date().toISOString(),
+        refunded: true
+      }
+    });
+  }
+}
+```
+
+**Updated Matrix Event for Pending Acceptance:**
+
+```json
+{
+  "type": "m.tween.wallet.p2p",
+  "content": {
+    "msgtype": "m.tween.money",
+    "body": "💸 Sent $5,000.00",
+    "transfer_id": "p2p_abc123",
+    "amount": 5000.00,
+    "currency": "USD",
+    "note": "Lunch money",
+    "sender": {
+      "user_id": "@alice:tween.example"
+    },
+    "recipient": {
+      "user_id": "@bob:tween.example"
+    },
+    "status": "pending_recipient_acceptance",
+    "expires_at": "2025-12-19T14:30:00Z",
+    "actions": [
+      {
+        "type": "accept",
+        "label": "Confirm Receipt",
+        "endpoint": "/wallet/v1/p2p/p2p_abc123/accept"
+      },
+      {
+        "type": "reject",
+        "label": "Decline",
+        "endpoint": "/wallet/v1/p2p/p2p_abc123/reject"
+      }
+    ],
+    "timestamp": "2025-12-18T14:30:00Z"
+  },
+  "room_id": "!chat:tween.example",
+  "sender": "@alice:tween.example"
+}
+```
+
+**Status Update Event:**
+
+```json
+{
+  "type": "m.tween.wallet.p2p.status",
+  "content": {
+    "transfer_id": "p2p_abc123",
+    "status": "completed",
+    "accepted_at": "2025-12-18T14:32:00Z",
+    "visual": {
+      "icon": "✓",
+      "color": "green",
+      "status_text": "Accepted"
+    }
+  }
 }
 ```
 
@@ -905,6 +1516,210 @@ Content-Type: application/json
 ```
 
 ### 7.4 Refunds
+
+```http
+POST /api/v1/payments/{payment_id}/refund HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "amount": 15000.00,
+  "reason": "customer_request",
+  "notes": "User requested refund"
+}
+```
+
+### 7.5 Group Gift Distribution Protocol
+
+#### 7.5.1 Overview
+
+Group Gift Distribution provides a culturally relevant, gamified alternative to direct transfers. Inspired by traditional gifting practices, this feature enables social engagement through shared monetary gifts in chat contexts.
+
+**Use Cases:**
+- Gift giving for celebrations and special occasions
+- Social engagement in group conversations
+- Fun way to share money among multiple recipients
+- Cultural celebrations and community building
+
+#### 7.5.2 Create Group Gift
+
+**Individual Gift:**
+
+```http
+POST /wallet/v1/gift/create HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "type": "individual",
+  "recipient": "@bob:tween.example",
+  "amount": 5000.00,
+  "currency": "USD",
+  "message": "Happy Birthday! 🎉",
+  "room_id": "!chat123:tween.example",
+  "idempotency_key": "unique-uuid"
+}
+```
+
+**Group Gift:**
+
+```http
+POST /wallet/v1/gift/create HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "type": "group",
+  "room_id": "!groupchat:tween.example",
+  "total_amount": 10000.00,
+  "currency": "USD",
+  "count": 10,
+  "distribution": "random",
+  "message": "Happy Friday! 🎁",
+  "expires_in_seconds": 86400,
+  "idempotency_key": "unique-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "gift_id": "gift_abc123",
+  "status": "active",
+  "type": "group",
+  "total_amount": 10000.00,
+  "count": 10,
+  "remaining": 10,
+  "opened_by": [],
+  "expires_at": "2025-12-19T14:30:00Z",
+  "event_id": "$event_gift123:tween.example"
+}
+```
+
+#### 7.5.3 Open Group Gift
+
+```http
+POST /wallet/v1/gift/{gift_id}/open HTTP/1.1
+Host: tmcp.example.com
+Authorization: Bearer <TEP_TOKEN>
+Content-Type: application/json
+
+{
+  "device_id": "device_xyz789"
+}
+```
+
+**Response:**
+```json
+{
+  "gift_id": "gift_abc123",
+  "amount_received": 1250.00,
+  "message": "Happy Friday! 🎁",
+  "sender": {
+    "user_id": "@alice:tween.example",
+    "display_name": "Alice Smith"
+  },
+  "opened_at": "2025-12-18T14:30:15Z",
+  "stats": {
+    "total_opened": 3,
+    "total_remaining": 7,
+    "your_rank": 3
+  }
+}
+```
+
+#### 7.5.4 Group Gift Matrix Events
+
+**Creation Event:**
+```json
+{
+  "type": "m.tween.gift",
+  "content": {
+    "msgtype": "m.tween.gift",
+    "body": "🎁 Gift: $100.00",
+    "gift_id": "gift_abc123",
+    "type": "group",
+    "total_amount": 10000.00,
+    "count": 10,
+    "message": "Happy Friday! 🎁",
+    "status": "active",
+    "opened_count": 0,
+    "actions": [
+      {
+        "type": "open",
+        "label": "Open Gift",
+        "endpoint": "/wallet/v1/gift/gift_abc123/open"
+      }
+    ]
+  },
+  "sender": "@alice:tween.example",
+  "room_id": "!groupchat:tween.example"
+}
+```
+
+**Update Event (each opening):**
+```json
+{
+  "type": "m.tween.gift.opened",
+  "content": {
+    "gift_id": "gift_abc123",
+    "opened_by": "@bob:tween.example",
+    "amount": 1250.00,
+    "opened_at": "2025-12-18T14:30:15Z",
+    "remaining_count": 7,
+    "leaderboard": [
+      {"user": "@lisa:tween.example", "amount": 1500.00},
+      {"user": "@sarah:tween.example", "amount": 1250.00},
+      {"user": "@bob:tween.example", "amount": 1250.00}
+    ]
+  }
+}
+```
+
+#### 7.5.5 Gift Distribution Algorithms
+
+**Random Distribution:**
+```javascript
+function calculateRandomDistributions(totalAmount, count) {
+  const distributions = [];
+  let remaining = totalAmount;
+  
+  for (let i = 0; i < count - 1; i++) {
+    // Ensure fair distribution: each amount is between 10% and 30% of average
+    const minAmount = totalAmount * 0.1 / count;
+    const maxAmount = remaining * 0.7; // Leave room for remaining recipients
+    const amount = randomBetween(minAmount, maxAmount);
+    
+    distributions.push(Math.round(amount * 100) / 100); // Round to cents
+    remaining -= amount;
+  }
+  
+  // Last recipient gets remaining amount
+  distributions.push(Math.round(remaining * 100) / 100);
+  
+  // Shuffle to randomize order
+  return shuffleArray(distributions);
+}
+```
+
+**Equal Distribution:**
+```javascript
+function calculateEqualDistributions(totalAmount, count) {
+  const amount = Math.round((totalAmount / count) * 100) / 100;
+  const distributions = Array(count).fill(amount);
+  
+  // Adjust for rounding errors
+  const difference = totalAmount - (amount * count);
+  if (difference !== 0) {
+    distributions[0] += difference;
+  }
+  
+  return distributions;
+}
+```
 
 ```http
 POST /api/v1/payments/{payment_id}/refund HTTP/1.1
@@ -1410,6 +2225,10 @@ Communication between mini-apps and the host application uses JSON-RPC 2.0 [RFC4
 | `tween.auth.getUserInfo` | MA → Host | Retrieve user profile |
 | `tween.wallet.getBalance` | MA → Host | Get wallet balance |
 | `tween.wallet.pay` | MA → Host | Initiate payment |
+| `tween.wallet.sendGift` | MA → Host | Send group gift |
+| `tween.wallet.openGift` | MA → Host | Open received gift |
+| `tween.wallet.acceptTransfer` | MA → Host | Accept P2P transfer |
+| `tween.wallet.rejectTransfer` | MA → Host | Reject P2P transfer |
 | `tween.messaging.sendCard` | MA → Host | Send rich message card |
 | `tween.storage.get` | MA → Host | Read storage |
 | `tween.storage.set` | MA → Host | Write storage |
@@ -1729,6 +2548,10 @@ When rate limit is exceeded:
 | `APP_NOT_REMOVABLE` | 403 | Official app cannot be removed | No |
 | `APP_NOT_FOUND` | 404 | Mini-app not found | No |
 | `DEVICE_NOT_REGISTERED` | 400 | Device not registered for MFA | No |
+| `RECIPIENT_NO_WALLET` | 400 | Payment recipient has no wallet | No |
+| `RECIPIENT_ACCEPTANCE_REQUIRED` | 400 | Recipient must accept payment | No |
+| `TRANSFER_EXPIRED` | 400 | Transfer expired (24h window) | No |
+| `GIFT_EXPIRED` | 400 | Group gift expired | No |
 
 ---
 
