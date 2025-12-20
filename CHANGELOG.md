@@ -19,25 +19,6 @@ All notable changes to Tween Mini-App Communication Protocol (TMCP) will be docu
   - Added gift opening protocol with leaderboard
   - Created Matrix events for gift creation and opening
 
-- **Section 6.4: External Account Linking & Funding**
-  - Added support for linking bank accounts and cards
-  - Implemented micro-deposit verification for accounts
-  - Added funding protocol with status tracking
-  - Defined external account management endpoints
-
-- **Section 6.5: Wallet Withdrawal Protocol**
-  - Added withdrawal initiation with approval workflow
-  - Implemented tiered withdrawal limits by verification level
-  - Added withdrawal status tracking and completion
-  - Defined security requirements for large withdrawals
-
-- **Section 11.5: Compliance Framework**
-  - Added flexible compliance framework for regulatory requirements
-  - Implemented tiered verification levels with corresponding limits
-  - Added transaction monitoring and risk scoring
-  - Created regulatory reporting capabilities
-  - Defined sanctions screening protocol
-
 - **Updated Section 7.1: Payment State Machine**
   - Added P2P transfer states with recipient acceptance
   - Added group gift states (created → active → opened)
@@ -56,7 +37,6 @@ All notable changes to Tween Mini-App Communication Protocol (TMCP) will be docu
 - **Updated Section 12.2: Additional Error Codes**
   - Added RECIPIENT_NO_WALLET, RECIPIENT_ACCEPTANCE_REQUIRED
   - Added TRANSFER_EXPIRED, GIFT_EXPIRED
-  - Added EXTERNAL_ACCOUNT_PENDING, WITHDRAWAL_LIMIT_EXCEEDED
 
 - **Updated Section 6.2.1: Verification Tiers**
   - Added verification tier information to balance responses
